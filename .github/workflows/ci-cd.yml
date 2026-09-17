@@ -41,7 +41,20 @@ jobs:
 
       - name: Log in to Yandex Container Registry
         run: |
+          echo "🔐 Настройка аутентификации в Yandex Container Registry..."
           yc container registry configure-docker
+          
+          # Проверяем, что конфиг Docker создан
+          if [ -f ~/.docker/config.json ]; then
+            echo "✅ Docker config создан"
+          else
+            echo "❌ Docker config не создан!"
+            exit 1
+          fi
+          
+          # Docker login явно через IAM токен
+          echo "🔑 Выполняем docker login..."
+          docker login -u iam -p "$(yc iam create-token)" cr.yandex
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
@@ -140,15 +153,8 @@ jobs:
           
           chmod 600 ~/.ssh/config
           
-          # Пробуем подключиться с подробным логом
-          echo "Testing SSH connection to bastion..."
-          ssh -v bastion "echo 'Bastion OK'" || echo "Bastion connection failed"
-          
-          echo "Testing SSH connection to master via bastion..."
-          ssh -v k8s-master "echo 'Master OK'" || echo "Master connection failed"
-          
-          # Выполняем деплой
+          # Выполняем деплой через SSH на мастер-ноду
           echo "Updating deployment..."
-          ssh k8s-master "kubectl set image deployment/diplom-app nginx=$IMAGE_URI -n default"
+          ssh k8s-master "sudo kubectl --kubeconfig /etc/kubernetes/admin.conf set image deployment/diplom-app nginx=$IMAGE_URI -n default"
           
           echo "✅ Deployment triggered successfully!"
