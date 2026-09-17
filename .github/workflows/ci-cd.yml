@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  push:
     tags:
       - 'v*'
 
@@ -34,9 +35,11 @@ jobs:
       - name: Get Registry ID dynamically
         id: get_registry
         run: |
-          REGISTRY_ID=$(yc container registry get --name $REGISTRY_NAME --format json | jq -r '.id')
+          # Получаем ID по имени реестра
+          REGISTRY_ID=$(yc container registry get --name ${{ env.REGISTRY_NAME }} --format json | jq -r '.id')
           echo "REGISTRY_ID=$REGISTRY_ID" >> $GITHUB_ENV
-          echo "IMAGE_NAME=cr.yandex/$REGISTRY_ID/diplom-app" >> $GITHUB_ENV
+          # ИСПРАВЛЕНИЕ: здесь только ID и имя приложения, без префикса "cr.yandex/"
+          echo "IMAGE_NAME=$REGISTRY_ID/diplom-app" >> $GITHUB_ENV
           echo "✅ Found Registry ID: $REGISTRY_ID"
 
       - name: Log in to Yandex Container Registry
@@ -82,9 +85,9 @@ jobs:
       - name: Get Registry ID dynamically
         id: get_registry
         run: |
-          REGISTRY_ID=$(yc container registry get --name $REGISTRY_NAME --format json | jq -r '.id')
+          REGISTRY_ID=$(yc container registry get --name ${{ env.REGISTRY_NAME }} --format json | jq -r '.id')
           echo "REGISTRY_ID=$REGISTRY_ID" >> $GITHUB_ENV
-          echo "IMAGE_NAME=cr.yandex/$REGISTRY_ID/diplom-app" >> $GITHUB_ENV
+          echo "IMAGE_NAME=$REGISTRY_ID/diplom-app" >> $GITHUB_ENV
           echo "✅ Found Registry ID: $REGISTRY_ID"
 
       - name: Get Bastion Public IP
@@ -104,11 +107,12 @@ jobs:
       - name: Deploy to Kubernetes via Bastion
         run: |
           TAG=${GITHUB_REF#refs/tags/}
+          # Здесь тоже соберется правильно: cr.yandex/<ID>/diplom-app:v1.0.0
           IMAGE_URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
           echo "Deploying image: $IMAGE_URI"
-
+          
           ssh -i ~/.ssh/diplom_cloud ubuntu@${{ env.BASTION_IP }} \
             "ssh -o StrictHostKeyChecking=no ubuntu@10.50.0.28 \
             'kubectl set image deployment/diplom-app nginx=$IMAGE_URI -n default'"
-
+          
           echo "✅ Deployment triggered successfully!"
