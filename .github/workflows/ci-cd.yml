@@ -41,19 +41,12 @@ jobs:
 
       - name: Log in to Yandex Container Registry
         run: |
-          echo "🔐 Аутентификация в Yandex Container Registry..."
-          
-          # Очищаем старый конфиг Docker, чтобы убрать credential helper
+          echo " Аутентификация в Yandex Container Registry..."
           rm -f ~/.docker/config.json
-          
-          # Создаем IAM токен
           IAM_TOKEN=$(yc iam create-token)
-          
-          # Выполняем docker login с IAM токеном
           echo "$IAM_TOKEN" | docker login --username iam --password-stdin cr.yandex
-          
           echo "✅ Authentication successful!"
-    
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -127,11 +120,13 @@ jobs:
           echo "Bastion IP: $BASTION_IP"
           echo "Master IP: $MASTER_IP"
           
-          # Создаем SSH конфиг
+          # Создаем SSH конфиг с явными правами
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
           cat > ~/.ssh/config << EOF
           Host bastion
-              HostName $BASTION_IP
+              HostName ${BASTION_IP}
               User ubuntu
               IdentityFile ~/.ssh/diplom_cloud
               StrictHostKeyChecking no
@@ -140,9 +135,10 @@ jobs:
               LogLevel ERROR
           
           Host k8s-master
-              HostName $MASTER_IP
+              HostName ${MASTER_IP}
               User ubuntu
               ProxyJump bastion
+              IdentityFile ~/.ssh/diplom_cloud
               StrictHostKeyChecking no
               IdentitiesOnly yes
               UserKnownHostsFile /dev/null
@@ -151,8 +147,13 @@ jobs:
           
           chmod 600 ~/.ssh/config
           
-          # Выполняем деплой через SSH на мастер-ноду
+          # Тест подключения
+          echo "Testing SSH connection..."
+          ssh -F ~/.ssh/config -v bastion "echo 'Bastion OK'" || echo "Bastion connection failed"
+          ssh -F ~/.ssh/config -v k8s-master "echo 'Master OK'" || echo "Master connection failed"
+          
+          # Выполняем деплой
           echo "Updating deployment..."
-          ssh k8s-master "sudo kubectl --kubeconfig /etc/kubernetes/admin.conf set image deployment/diplom-app nginx=$IMAGE_URI -n default"
+          ssh -F ~/.ssh/config k8s-master "sudo kubectl --kubeconfig /etc/kubernetes/admin.conf set image deployment/diplom-app nginx=${IMAGE_URI} -n default"
           
           echo "✅ Deployment triggered successfully!"
