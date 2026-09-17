@@ -1,0 +1,100 @@
+name: CI/CD Diplom App
+
+on:
+  push:
+    branches:
+      - main
+  push:
+    tags:
+      - 'v*'
+
+env:
+  REGISTRY: cr.yandex
+  IMAGE_NAME: ${{ secrets.YC_REGISTRY_ID }}/diplom-app
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Yandex Cloud CLI
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+          echo "$HOME/yandex-cloud/bin" >> $GITHUB_PATH
+
+      - name: Authenticate to Yandex Cloud
+        run: |
+          echo '${{ secrets.YC_SA_KEY }}' > sa-key.json
+          yc config profile create ci-cd-profile
+          yc config profile activate ci-cd-profile
+          yc config set service-account-key sa-key.json
+          yc config set folder-id ${{ secrets.YC_FOLDER_ID }}
+
+      - name: Log in to Yandex Container Registry
+        run: |
+          yc container registry configure-docker
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,format=short,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  deploy-to-k8s:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') # Запускается ТОЛЬКО при создании тега (например, v1.0.0)
+    steps:
+      - name: Install Yandex Cloud CLI
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+          echo "$HOME/yandex-cloud/bin" >> $GITHUB_PATH
+
+      - name: Authenticate to Yandex Cloud
+        run: |
+          echo '${{ secrets.YC_SA_KEY }}' > sa-key.json
+          yc config profile create ci-cd-profile
+          yc config profile activate ci-cd-profile
+          yc config set service-account-key sa-key.json
+          yc config set folder-id ${{ secrets.YC_FOLDER_ID }}
+
+      - name: Get Bastion Public IP
+        id: get_bastion_ip
+        run: |
+          BASTION_IP=$(yc compute instance get bastion --format json | jq -r '.network_interfaces[0].primary_v4_address.one_to_one_nat.address')
+          echo "BASTION_IP=$BASTION_IP" >> $GITHUB_ENV
+          echo "Found Bastion IP: $BASTION_IP"
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/diplom_cloud
+          chmod 600 ~/.ssh/diplom_cloud
+          ssh-keyscan -H ${{ env.BASTION_IP }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to Kubernetes via Bastion
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          IMAGE_URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          echo "Deploying image: $IMAGE_URI"
+          
+          # Подключаемся к бастиону и выполняем kubectl на мастере
+          ssh -i ~/.ssh/diplom_cloud ubuntu@${{ env.BASTION_IP }} \
+            "ssh -o StrictHostKeyChecking=no ubuntu@10.50.0.28 \
+            'kubectl set image deployment/diplom-app nginx=$IMAGE_URI -n default'"
+            
+          echo "✅ Deployment triggered successfully!"
