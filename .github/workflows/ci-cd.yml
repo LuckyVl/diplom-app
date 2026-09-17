@@ -43,6 +43,9 @@ jobs:
         run: |
           echo "🔐 Аутентификация в Yandex Container Registry..."
           
+          # Очищаем старый конфиг Docker, чтобы убрать credential helper
+          rm -f ~/.docker/config.json
+          
           # Создаем IAM токен
           IAM_TOKEN=$(yc iam create-token)
           
