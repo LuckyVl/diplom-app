@@ -41,21 +41,16 @@ jobs:
 
       - name: Log in to Yandex Container Registry
         run: |
-          echo "🔐 Настройка аутентификации в Yandex Container Registry..."
-          yc container registry configure-docker
+          echo "🔐 Аутентификация в Yandex Container Registry..."
           
-          # Проверяем, что конфиг Docker создан
-          if [ -f ~/.docker/config.json ]; then
-            echo "✅ Docker config создан"
-          else
-            echo "❌ Docker config не создан!"
-            exit 1
-          fi
+          # Создаем IAM токен
+          IAM_TOKEN=$(yc iam create-token)
           
-          # Docker login явно через IAM токен
-          echo "🔑 Выполняем docker login..."
-          docker login -u iam -p "$(yc iam create-token)" cr.yandex
-
+          # Выполняем docker login с IAM токеном
+          echo "$IAM_TOKEN" | docker login --username iam --password-stdin cr.yandex
+          
+          echo "✅ Authentication successful!"
+    
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
