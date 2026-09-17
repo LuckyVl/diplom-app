@@ -106,12 +106,37 @@ jobs:
       - name: Deploy to Kubernetes via Bastion
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          # Здесь тоже соберется правильно: cr.yandex/<ID>/diplom-app:v1.0.0
           IMAGE_URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
           echo "Deploying image: $IMAGE_URI"
+          echo "Bastion IP: ${{ env.BASTION_IP }}"
+          echo "Master IP: 10.50.0.28"
           
-          ssh -i ~/.ssh/diplom_cloud ubuntu@${{ env.BASTION_IP }} \
-            "ssh -o StrictHostKeyChecking=no ubuntu@10.50.0.28 \
-            'kubectl set image deployment/diplom-app nginx=$IMAGE_URI -n default'"
+          # Создаем SSH конфиг с ProxyJump
+          mkdir -p ~/.ssh
+          cat >> ~/.ssh/config << EOF
+          Host bastion
+              HostName ${{ env.BASTION_IP }}
+              User ubuntu
+              IdentityFile ~/.ssh/diplom_cloud
+              StrictHostKeyChecking no
+              IdentitiesOnly yes
+          
+          Host k8s-master
+              HostName 10.50.0.28
+              User ubuntu
+              ProxyJump bastion
+              StrictHostKeyChecking no
+              IdentitiesOnly yes
+          EOF
+          
+          chmod 600 ~/.ssh/config
+          
+          # Тестируем подключение
+          echo "Testing SSH connection..."
+          ssh k8s-master "echo 'SSH connection successful!'"
+          
+          # Выполняем деплой
+          echo "Updating deployment..."
+          ssh k8s-master "kubectl set image deployment/diplom-app nginx=$IMAGE_URI -n default"
           
           echo "✅ Deployment triggered successfully!"
