@@ -34,10 +34,8 @@ jobs:
       - name: Get Registry ID dynamically
         id: get_registry
         run: |
-          # Получаем ID по имени реестра
           REGISTRY_ID=$(yc container registry get --name ${{ env.REGISTRY_NAME }} --format json | jq -r '.id')
           echo "REGISTRY_ID=$REGISTRY_ID" >> $GITHUB_ENV
-          # ИСПРАВЛЕНИЕ: здесь только ID и имя приложения, без префикса "cr.yandex/"
           echo "IMAGE_NAME=$REGISTRY_ID/diplom-app" >> $GITHUB_ENV
           echo "✅ Found Registry ID: $REGISTRY_ID"
 
@@ -82,7 +80,6 @@ jobs:
           yc config set folder-id ${{ secrets.YC_FOLDER_ID }}
 
       - name: Get Registry ID dynamically
-        id: get_registry
         run: |
           REGISTRY_ID=$(yc container registry get --name ${{ env.REGISTRY_NAME }} --format json | jq -r '.id')
           echo "REGISTRY_ID=$REGISTRY_ID" >> $GITHUB_ENV
@@ -90,50 +87,65 @@ jobs:
           echo "✅ Found Registry ID: $REGISTRY_ID"
 
       - name: Get Bastion Public IP
-        id: get_bastion_ip
         run: |
           BASTION_IP=$(yc compute instance get bastion --format json | jq -r '.network_interfaces[0].primary_v4_address.one_to_one_nat.address')
           echo "BASTION_IP=$BASTION_IP" >> $GITHUB_ENV
           echo "Found Bastion IP: $BASTION_IP"
+
+      - name: Get Master Internal IP
+        run: |
+          MASTER_IP=$(yc compute instance get k8s-master --format json | jq -r '.network_interfaces[0].primary_v4_address.address')
+          echo "MASTER_IP=$MASTER_IP" >> $GITHUB_ENV
+          echo "Found Master IP: $MASTER_IP"
 
       - name: Setup SSH Key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/diplom_cloud
           chmod 600 ~/.ssh/diplom_cloud
-          ssh-keyscan -H ${{ env.BASTION_IP }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ env.BASTION_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Deploy to Kubernetes via Bastion
         run: |
           TAG=${GITHUB_REF#refs/tags/}
           IMAGE_URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
-          echo "Deploying image: $IMAGE_URI"
-          echo "Bastion IP: ${{ env.BASTION_IP }}"
-          echo "Master IP: 10.50.0.28"
+          BASTION_IP="${{ env.BASTION_IP }}"
+          MASTER_IP="${{ env.MASTER_IP }}"
           
-          # Создаем SSH конфиг с ProxyJump
+          echo "Deploying image: $IMAGE_URI"
+          echo "Bastion IP: $BASTION_IP"
+          echo "Master IP: $MASTER_IP"
+          
+          # Создаем SSH конфиг
           mkdir -p ~/.ssh
-          cat >> ~/.ssh/config << EOF
+          cat > ~/.ssh/config << EOF
           Host bastion
-              HostName ${{ env.BASTION_IP }}
+              HostName $BASTION_IP
               User ubuntu
               IdentityFile ~/.ssh/diplom_cloud
               StrictHostKeyChecking no
               IdentitiesOnly yes
+              UserKnownHostsFile /dev/null
+              LogLevel ERROR
           
           Host k8s-master
-              HostName 10.50.0.28
+              HostName $MASTER_IP
               User ubuntu
               ProxyJump bastion
               StrictHostKeyChecking no
               IdentitiesOnly yes
+              UserKnownHostsFile /dev/null
+              LogLevel ERROR
           EOF
           
           chmod 600 ~/.ssh/config
           
-          # Тестируем подключение
-          echo "Testing SSH connection..."
-          ssh k8s-master "echo 'SSH connection successful!'"
+          # Пробуем подключиться с подробным логом
+          echo "Testing SSH connection to bastion..."
+          ssh -v bastion "echo 'Bastion OK'" || echo "Bastion connection failed"
+          
+          echo "Testing SSH connection to master via bastion..."
+          ssh -v k8s-master "echo 'Master OK'" || echo "Master connection failed"
           
           # Выполняем деплой
           echo "Updating deployment..."
